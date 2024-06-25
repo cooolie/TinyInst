@@ -1290,6 +1290,25 @@ void Debugger::HandleTargetEnded() {
   }
 }
 
+std::string Debugger::get_module_by_addr(size_t addr) {
+    HMODULE* module_handles = NULL;
+    DWORD num_modules = GetLoadedModules(&module_handles);
+
+    std::string name = "unk";
+    for (DWORD i = 0; i < num_modules; i++) {
+        char base_name[MAX_PATH];
+        GetModuleBaseNameA(child_handle, module_handles[i], (LPSTR)(&base_name), sizeof(base_name));
+        DWORD img_size = GetImageSize((void*)module_handles[i]);
+
+        if (addr > (size_t)module_handles[i] && addr < (size_t)module_handles[i] + img_size) {
+            name = base_name;
+            break;   
+        }
+
+    }
+    if (module_handles) free(module_handles);
+    return name;
+}
 // called when process entrypoint gets reached
 void Debugger::OnEntrypoint() {
   // printf("Entrypoint\n");
@@ -1789,6 +1808,46 @@ DebuggerStatus Debugger::Kill() {
 DebuggerStatus Debugger::Attach(unsigned int pid, uint32_t timeout) {
   attach_mode = true;
 
+
+  if (mem_limit || cpu_aff) {
+      HANDLE hJob = CreateJobObject(NULL, NULL);
+      if (hJob == NULL) {
+          FATAL("CreateJobObject failed, GLE=%d.\n", GetLastError());
+      }
+
+      JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_limit;
+      ZeroMemory(&job_limit, sizeof(job_limit));
+      if (mem_limit) {
+          job_limit.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+          job_limit.ProcessMemoryLimit = (size_t)(mem_limit * 1024 * 1024);
+      }
+
+      if (cpu_aff) {
+          job_limit.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_AFFINITY;
+          job_limit.BasicLimitInformation.Affinity = (DWORD_PTR)cpu_aff;
+      }
+
+      if (!SetInformationJobObject(
+          hJob,
+          JobObjectExtendedLimitInformation,
+          &job_limit,
+          sizeof(job_limit)
+      )) {
+          FATAL("SetInformationJobObject failed, GLE=%d.\n", GetLastError());
+      }
+
+      if (mem_limit || cpu_aff) {
+          HANDLE proc_handle = OpenProcess(PROCESS_ALL_ACCESS, false, pid);
+          if (INVALID_HANDLE_VALUE == proc_handle) {
+              FATAL("OpenProcess failed, GLE=%d.\n", GetLastError());
+          }
+          if (!AssignProcessToJobObject(hJob, proc_handle)) {
+              FATAL("AssignProcessToJobObject failed, GLE=%d.\n", GetLastError());
+          }
+          CloseHandle(proc_handle);
+      }
+  }
+
   if (!DebugActiveProcess(pid)) {
     DWORD error_code = GetLastError();
     
@@ -1876,7 +1935,7 @@ DebuggerStatus Debugger::Continue(uint32_t timeout) {
 void Debugger::Init(int argc, char **argv) {
   have_thread_context = false;
   sinkhole_stds = false;
-  mem_limit = 0;
+  mem_limit = 4096;
   cpu_aff = 0;
 
   attach_mode = false;

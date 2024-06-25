@@ -731,6 +731,21 @@ void TinyInst::OnCrashed(Exception *exception_record) {
     module->entry_offsets.clear();
   }
   
+  char* type_str = "OTHER";
+  char ext_str[256] = {0};
+  if (ACCESS_VIOLATION == exception_record->type) {
+      type_str = "av";
+
+      sprintf_s(ext_str, "%x", (unsigned int)exception_record->access_address&0xffffffff);
+
+  }
+  else if (STACK_OVERFLOW == exception_record->type) {
+      type_str = "of";
+  }
+  else if (ILLEGAL_INSTRUCTION == exception_record->type) {
+      type_str = "il";
+  }
+
   char *address = (char *)exception_record->ip;
 
   printf("Exception at address %p\n", static_cast<void*>(address));
@@ -739,8 +754,32 @@ void TinyInst::OnCrashed(Exception *exception_record) {
     printf("Access address: %p\n", exception_record->access_address);
   }
 
+
+  const char* module_name = "unk";
   ModuleInfo *module = GetModuleFromInstrumented((size_t)address);
-  if (!module) return;
+  //if (!module) {
+  //    HMODULE* module_handles = NULL;
+  //    DWORD num_modules = GetLoadedModules(&module_handles);
+  //    for (DWORD i = 0; i < num_modules; i++) {
+  //        char base_name[MAX_PATH];
+  //        GetModuleBaseNameA(child_handle, module_handles[i], (LPSTR)(&base_name), sizeof(base_name));
+  //        if (trace_debug_events)
+  //            printf("Debugger: Loaded module %s at %p\n", base_name, (void*)module_handles[i]);
+  //        OnModuleLoaded((void*)module_handles[i], base_name);
+  //    }
+  //}
+  if (nullptr != module)
+      module_name = module->module_name.c_str();
+  else
+  {
+      module_name = get_module_by_addr((size_t)address).c_str();
+  }
+
+  char crash_info[256] = {};
+  sprintf_s(crash_info, "%s_%s_%s_%x", type_str, module_name, ext_str, (unsigned int)address & 0xffff);
+  printf("CRASHINFO:%s\n", crash_info);
+
+  if (!module || !module->instrumented) return;
 
   printf("Exception in instrumented module %s %p\n", module->module_name.c_str(), module->module_header);
   size_t offset = (size_t)address - (size_t)module->instrumented_code_remote;
@@ -753,22 +792,23 @@ void TinyInst::OnCrashed(Exception *exception_record) {
     }
   }
   
-  printf("Code before:\n");
-  size_t offset_from;
-  if (offset < 10) offset_from = 0;
-  else offset_from = offset - 10;
-  for (size_t i = offset_from; i < offset; i++) {
-    printf("%02x ", (unsigned char)(module->instrumented_code_local[i]));
-  }
-  printf("\n");
-  printf("Code after:\n");
-  size_t offset_to = offset + 0x10;
-  if (offset_to > module->instrumented_code_size)
-    offset_to = module->instrumented_code_size;
-  for (size_t i = offset; i < offset_to; i++) {
-    printf("%02x ", (unsigned char)(module->instrumented_code_local[i]));
-  }
-  printf("\n");
+  
+  //printf("Code before:\n");
+  //size_t offset_from;
+  //if (offset < 10) offset_from = 0;
+  //else offset_from = offset - 10;
+  //for (size_t i = offset_from; i < offset; i++) {
+  //  printf("%02x ", (unsigned char)(module->instrumented_code_local[i]));
+  //}
+  //printf("\n");
+  //printf("Code after:\n");
+  //size_t offset_to = offset + 0x10;
+  //if (offset_to > module->instrumented_code_size)
+  //  offset_to = module->instrumented_code_size;
+  //for (size_t i = offset; i < offset_to; i++) {
+  //  printf("%02x ", (unsigned char)(module->instrumented_code_local[i]));
+  //}
+  //printf("\n");
 }
 
 // gets the address in the instrumented code corresponding to
