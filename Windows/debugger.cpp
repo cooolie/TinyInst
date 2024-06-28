@@ -545,6 +545,32 @@ void Debugger::RemoteProtect(void *address, size_t size, MemoryProtection protec
   }
 }
 
+void Debugger::GetCodeSize(void* module_base,
+    size_t min_address,
+    size_t max_address,
+    size_t* code_size) {
+    LPCVOID end_address = (void*)max_address;
+    LPCVOID cur_address = (void*)min_address;
+    MEMORY_BASIC_INFORMATION meminfobuf;
+
+    *code_size = 0;
+
+    while (cur_address < end_address) {
+        size_t ret = VirtualQueryEx(child_handle,
+            cur_address,
+            &meminfobuf,
+            sizeof(MEMORY_BASIC_INFORMATION));
+        if (!ret) break;
+
+        if (meminfobuf.Protect & 0xF0) {
+            printf("GetCodeSize-> cur_address:%p, %p, %llx, %lx\n", cur_address,meminfobuf.BaseAddress, meminfobuf.RegionSize, meminfobuf.Protect);
+
+            *code_size += meminfobuf.RegionSize;
+        }
+
+        cur_address = (char*)meminfobuf.BaseAddress + meminfobuf.RegionSize;
+    }
+}
 
 // detects executable memory regions in the module
 // makes them non-executable
@@ -577,8 +603,12 @@ void Debugger::ExtractCodeRanges(void *module_base,
     if (!ret) break;
 
     if (meminfobuf.Protect & 0xF0) {
-      // printf("%p, %llx, %lx\n", meminfobuf.BaseAddress, meminfobuf.RegionSize, meminfobuf.Protect);
+       printf("ExtractCodeRanges->cur_address:%p, %p, %llx, %lx\n", cur_address,meminfobuf.BaseAddress, meminfobuf.RegionSize, meminfobuf.Protect);
 
+       if (meminfobuf.RegionSize + (size_t)meminfobuf.BaseAddress > (size_t)end_address) {
+           meminfobuf.RegionSize = (size_t)end_address - (size_t)meminfobuf.BaseAddress;
+        }
+       
       SIZE_T size_read;
       newRange.data = (char *)malloc(meminfobuf.RegionSize);
       if (!ReadProcessMemory(child_handle,

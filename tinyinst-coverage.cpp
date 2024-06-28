@@ -38,14 +38,14 @@ int cur_iteration;
 std::string RunTarget(int argc, char **argv, unsigned int pid, uint32_t timeout) {
   DebuggerStatus status;
 
-  if (!instrumentation->IsTargetFunctionDefined()) {
-      return "ERR:!IsTargetFunctionDefined\n";
-  }
+  //if (!instrumentation->IsTargetFunctionDefined()) {
+  //    return "ERR:!IsTargetFunctionDefined\n";
+  //}
 
   // else clear only when the target function is reached
-  if (!instrumentation->IsTargetFunctionDefined()) {
-    instrumentation->ClearCoverage();
-  }
+  //if (!instrumentation->IsTargetFunctionDefined()) {
+  //  instrumentation->ClearCoverage();
+  //}
 
   if (instrumentation->IsTargetAlive() && persist) {
     status = instrumentation->Continue(timeout);
@@ -85,7 +85,14 @@ std::string RunTarget(int argc, char **argv, unsigned int pid, uint32_t timeout)
       }
     }
 
-    instrumentation->ClearCoverage();
+
+    // 也就是在 TAGET methon 外执行到了 需要 instrment 模块的代码
+    Coverage newcoverage;
+    instrumentation->GetCoverage(newcoverage, true);
+    for (auto iter = newcoverage.begin(); iter != newcoverage.end(); iter++) {
+        WARN("Found %zd new offsets befor DEBUGGER_TARGET_START %s\n", iter->offsets.size(), iter->module_name.c_str());
+    }
+    instrumentation->IgnoreCoverage(newcoverage);
 
     status = instrumentation->Continue(timeout);
   }

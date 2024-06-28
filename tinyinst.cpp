@@ -36,6 +36,24 @@ limitations under the License.
   #include "macOS/dyld_cache_map_parser.h"
 #endif
 
+#include <random>
+
+int generateRandomNumber(int min, int max) {
+    // 声明静态局部变量和互斥量
+    static std::once_flag flag;
+    static std::mt19937 rng;
+
+    // 使用 std::call_once 确保只初始化一次
+    std::call_once(flag, [&]() {
+        std::random_device rd;
+        rng = std::mt19937(rd());
+        });
+
+    // 定义均匀整数分布器并生成随机数
+    std::uniform_int_distribution<int> dist(min, max);
+    return dist(rng);
+}
+
 ModuleInfo::ModuleInfo() {
   module_name[0] = 0;
   module_header = NULL;
@@ -943,6 +961,25 @@ void TinyInst::InstrumentModule(ModuleInfo *module) {
     ProtectCodeRanges(&module->executable_ranges);
     FixCrossModuleLinks(module);
     return;
+  }
+
+  //
+  if (target_function_defined) {
+      size_t tmp = 0;
+      GetCodeSize(module->module_header,
+          module->min_address,
+          module->max_address,
+          &tmp);
+      size_t instrument_chunk = tmp / 5;
+      if (instrument_chunk > 512 * 1024) {
+          //int rand_idx = generateRandomNumber(0, 8);
+          int rand_idx = 2;
+          module->min_address += instrument_chunk * rand_idx+0x1000;
+          module->max_address = module->min_address + 3*instrument_chunk ;
+          module->max_address & 0x1000;
+
+          SAY("instrument_chunk:%d,rand_idx:%x,tmp:%x\n", instrument_chunk, rand_idx, tmp);
+      }
   }
 
   ExtractCodeRanges(module->module_header,

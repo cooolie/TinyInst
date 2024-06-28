@@ -126,6 +126,11 @@ protected:
                          std::list<AddressRange> *executable_ranges,
                          size_t *code_size);
 
+  void GetCodeSize(void* module_base,
+      size_t min_address,
+      size_t max_address,
+      size_t* code_size);
+
   void ProtectCodeRanges(std::list<AddressRange> *executable_ranges);
 
   // returns address in (potentially) instrumented code
