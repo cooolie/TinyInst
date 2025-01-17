@@ -85,6 +85,8 @@ public:
     bool maybe_write_violation;
     bool maybe_execute_violation;
     void *access_address;
+    DWORD dwProcessId;
+    DWORD dwThreadId;
   };
 
   Exception GetLastException() {
@@ -124,7 +126,8 @@ protected:
                          size_t min_address,
                          size_t max_address,
                          std::list<AddressRange> *executable_ranges,
-                         size_t *code_size);
+      size_t* code_size,
+      bool do_protect = true);
 
   void GetCodeSize(void* module_base,
       size_t min_address,
@@ -179,7 +182,7 @@ private:
   DebuggerStatus DebugLoop(uint32_t timeout, bool killing=false);
   int HandleDebuggerBreakpoint(void *address);
   void HandleDllLoadInternal(LOAD_DLL_DEBUG_INFO *LoadDll);
-  DebuggerStatus HandleExceptionInternal(EXCEPTION_RECORD *exception_record);
+  DebuggerStatus HandleExceptionInternal(EXCEPTION_RECORD *exception_record, LPDEBUG_EVENT pdev);
   void HandleTargetReachedInternal();
   void HandleTargetEnded();
   char *GetTargetAddress(HMODULE module);

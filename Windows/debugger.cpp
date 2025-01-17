@@ -579,7 +579,8 @@ void Debugger::ExtractCodeRanges(void *module_base,
                                  size_t min_address,
                                  size_t max_address,
                                  std::list<AddressRange> *executable_ranges,
-                                 size_t *code_size)
+    size_t* code_size,
+    bool do_protect)
 {
   LPCVOID end_address = (void *)max_address;
   LPCVOID cur_address = (void *)min_address;
@@ -623,17 +624,19 @@ void Debugger::ExtractCodeRanges(void *module_base,
         FATAL("Error in ReadProcessMemory");
       }
 
-      uint8_t low = meminfobuf.Protect & 0xFF;
-      low = low >> 4;
-      DWORD newProtect = (meminfobuf.Protect & 0xFFFFFF00) + low;
-      DWORD oldProtect;
-      if (!VirtualProtectEx(child_handle,
-        meminfobuf.BaseAddress,
-        meminfobuf.RegionSize,
-        newProtect,
-        &oldProtect))
-      {
-        FATAL("Error in VirtualProtectEx");
+      if (do_protect) {
+          uint8_t low = meminfobuf.Protect & 0xFF;
+          low = low >> 4;
+          DWORD newProtect = (meminfobuf.Protect & 0xFFFFFF00) + low;
+          DWORD oldProtect;
+          if (!VirtualProtectEx(child_handle,
+              meminfobuf.BaseAddress,
+              meminfobuf.RegionSize,
+              newProtect,
+              &oldProtect))
+          {
+              FATAL("Error in VirtualProtectEx");
+          }
       }
 
       newRange.from = (size_t)meminfobuf.BaseAddress;
@@ -1471,9 +1474,11 @@ void Debugger::OnProcessCreated() {
 }
 
 // called when an exception in the target occurs
-DebuggerStatus Debugger::HandleExceptionInternal(EXCEPTION_RECORD *exception_record)
+DebuggerStatus Debugger::HandleExceptionInternal(EXCEPTION_RECORD *exception_record, LPDEBUG_EVENT pdev)
 {
   CreateException(exception_record, &last_exception);
+  last_exception.dwProcessId = pdev->dwProcessId;
+  last_exception.dwThreadId = pdev->dwThreadId;
 
   // note: instrumentation could have placed breakpoints
   // on the same addresses as debugger
@@ -1595,7 +1600,7 @@ DebuggerStatus Debugger::DebugLoop(uint32_t timeout, bool killing)
     {
     case EXCEPTION_DEBUG_EVENT:
       if (!killing) {
-        ret = HandleExceptionInternal(&DebugEv->u.Exception.ExceptionRecord);
+        ret = HandleExceptionInternal(&DebugEv->u.Exception.ExceptionRecord, DebugEv);
         if (ret == DEBUGGER_CRASHED) OnCrashed(&last_exception);
         if (ret != DEBUGGER_CONTINUE) return ret;
       } else {

@@ -165,6 +165,8 @@ protected:
   void InstrumentAddressRange(const char *name, size_t min_address, size_t max_address);
 
 private:
+    void dump_esp_ret_module_name(void** pesp);
+  void AddInstrumentedModule(char* name, bool do_protect);
   bool HandleBreakpoint(void *address);
   void OnInstrumentModuleLoaded(void *module, ModuleInfo *target_module);
   ModuleInfo *IsInstrumentModule(char *module_name);
@@ -321,7 +323,7 @@ class ModuleInfo {
   std::unordered_set<size_t> entry_offsets;
 
   UnwindData *unwind_data;
-
+  bool do_protect;
   // clients can use this to store additional data
   // about the module
   void *client_data;

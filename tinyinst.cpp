@@ -67,6 +67,7 @@ ModuleInfo::ModuleInfo() {
   instrumented_code_size = 0;
   unwind_data = NULL;
   client_data = NULL;
+  do_protect = true;
 }
 
 void ModuleInfo::ClearInstrumentation() {
@@ -754,7 +755,10 @@ void TinyInst::OnCrashed(Exception *exception_record) {
   if (ACCESS_VIOLATION == exception_record->type) {
       type_str = "av";
 
-      sprintf_s(ext_str, "%x", (unsigned int)exception_record->access_address&0xffffffff);
+      if((unsigned int)exception_record->access_address >0x4000)
+        sprintf_s(ext_str, "%x", (unsigned int)exception_record->access_address & 0xffffffff);
+      else
+        sprintf_s(ext_str, "nullptr_%x", (unsigned int)exception_record->access_address&0xffffffff);
 
   }
   else if (STACK_OVERFLOW == exception_record->type) {
@@ -958,35 +962,38 @@ void TinyInst::InstrumentModule(ModuleInfo *module) {
     printf("Module %s already instrumented, "
            "reusing instrumentation data\n",
            module->module_name.c_str());
-    ProtectCodeRanges(&module->executable_ranges);
+    if (module->do_protect) {
+        ProtectCodeRanges(&module->executable_ranges);
+    }
     FixCrossModuleLinks(module);
     return;
   }
 
   //
-  if (target_function_defined) {
-      size_t tmp = 0;
-      GetCodeSize(module->module_header,
-          module->min_address,
-          module->max_address,
-          &tmp);
-      size_t instrument_chunk = tmp / 5;
-      if (instrument_chunk > 512 * 1024) {
-          //int rand_idx = generateRandomNumber(0, 8);
-          int rand_idx = 2;
-          module->min_address += instrument_chunk * rand_idx+0x1000;
-          module->max_address = module->min_address + 3*instrument_chunk ;
-          module->max_address & 0x1000;
+  //if (target_function_defined) {
+  //    size_t tmp = 0;
+  //    GetCodeSize(module->module_header,
+  //        module->min_address,
+  //        module->max_address,
+  //        &tmp);
+  //    size_t instrument_chunk = tmp / 5;
+  //    if (instrument_chunk > 512 * 1024) {
+  //        //int rand_idx = generateRandomNumber(0, 8);
+  //        int rand_idx = 2;
+  //        module->min_address += instrument_chunk * rand_idx+0x1000;
+  //        module->max_address = module->min_address + 3*instrument_chunk ;
+  //        module->max_address & 0x1000;
 
-          SAY("instrument_chunk:%d,rand_idx:%x,tmp:%x\n", instrument_chunk, rand_idx, tmp);
-      }
-  }
+  //        SAY("instrument_chunk:%d,rand_idx:%x,tmp:%x\n", instrument_chunk, rand_idx, tmp);
+  //    }
+  //}
 
   ExtractCodeRanges(module->module_header,
                     module->min_address,
                     module->max_address,
                     &module->executable_ranges,
-                    &module->code_size);
+      &module->code_size,
+      module->do_protect);
 
   // allocate buffer for instrumented code
   module->instrumented_code_size = module->code_size * CODE_SIZE_MULTIPLIER;
@@ -1210,7 +1217,15 @@ void TinyInst::OnEntrypoint() {
   if(!target_function_defined && !instrument_modules_on_load) InstrumentAllLoadedModules();
 }
 
+void TinyInst::dump_esp_ret_module_name(void** pesp) {
+    for (int i = 0; i < 5; ++i) {
+        void* ptr = *pesp;
+        ++pesp;
 
+        auto name = get_module_by_addr((size_t)ptr);
+        printf("TRACE: possible call module by retaddr->%s\n", name.c_str());
+    }
+}
 bool TinyInst::OnException(Exception *exception_record) {
   switch (exception_record->type)
   {
@@ -1223,6 +1238,24 @@ bool TinyInst::OnException(Exception *exception_record) {
     if (exception_record->maybe_execute_violation) {
       // possibly we are trying to executed code in an instrumented module
       if (TryExecuteInstrumented((char *)exception_record->access_address)) {
+          if(trace_module_entries){
+			  if (0 != GetTickCount64() % 1000) return true;
+              //»ñÈ¡esp rsp µØÖ·
+              CONTEXT context;
+              HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, exception_record->dwProcessId);
+              HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, FALSE, exception_record->dwThreadId);
+
+              context.ContextFlags = CONTEXT_FULL;
+              GetThreadContext(hThread, &context);
+
+              LPVOID ptrs[5] = {};
+              SIZE_T dwNum = 0;
+              ReadProcessMemory(hProcess, (LPVOID)context.Rsp, &ptrs, sizeof(ptrs), &dwNum);
+
+              printf("TRACE: possible call module by retaddr->%llx\n", context.Rsp);
+              dump_esp_ret_module_name((void**)&ptrs);
+          }
+          
         return true;
       }
     }
@@ -1290,7 +1323,18 @@ InstructionResult TinyInst::InstrumentInstruction(ModuleInfo *module,
   return INST_NOTHANDLED;
 }
 
-
+void TinyInst::AddInstrumentedModule(char* name, bool do_protect) {
+    std::string module_name = name;
+    for (auto iter = instrumented_modules.begin(); iter != instrumented_modules.end(); iter++) {
+        if ((*iter)->module_name == module_name) {
+            FATAL("Duplicate instrumented modules, module %s is already being instrumented", name);
+        }
+    }
+    ModuleInfo* new_module = new ModuleInfo();
+    new_module->module_name = module_name;
+    new_module->do_protect = do_protect;
+    instrumented_modules.push_back(new_module);
+}
 // initializes instrumentation from command line options
 void TinyInst::Init(int argc, char **argv) {
   // init the debugger first
@@ -1375,9 +1419,14 @@ void TinyInst::Init(int argc, char **argv) {
 #endif
 
   for (const auto module_name: module_names) {
-    ModuleInfo *new_module = new ModuleInfo();
-    new_module->module_name = module_name;
-    instrumented_modules.push_back(new_module);
+      AddInstrumentedModule(module_name, true);
+      // SAY("--- %s\n", module_name);
+  }
+
+  std::list <char*> module_names_transitive;
+  GetOptionAll("-instrument_transitive", argc, argv, &module_names_transitive);
+  for (const auto module_name : module_names_transitive) {
+      AddInstrumentedModule(module_name, false);
     // SAY("--- %s\n", module_name);
   }
 
